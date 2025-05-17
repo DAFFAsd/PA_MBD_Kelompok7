@@ -1,4 +1,4 @@
-# Dokumentasi Mobil Mini Arduino
+# Dokumentasi Go IVAN Kelompok 7 (Cara kerja kode/rangkaian secara garis besar)
 
 ## Deskripsi Umum
 Kode ini adalah implementasi Assembly untuk mobil mini Arduino GO IVAN yang dilengkapi dengan layar LCD, dua motor DC yang dikontrol oleh driver L298 dengan PWM, dan sensor IR untuk deteksi hambatan di empat arah (depan, belakang, kiri, kanan) dengan buzzer untuk peringatan.
