@@ -112,3 +112,125 @@ data_wrt:
       CBI   PORTB, 0          ;EN = 0 untuk pulsa H-ke-L
       RCALL delay_us          ;tunda dalam mikrodetik
       RET
+;================================================================
+delay_short:
+      NOP
+      NOP
+      RET
+;------------------------
+delay_us:
+      LDI   R20, 90
+l3:   RCALL delay_short
+      DEC   R20
+      BRNE  l3
+      RET
+;-----------------------
+delay_ms:
+      LDI   R21, 40
+l4:   RCALL delay_us
+      DEC   R21
+      BRNE  l4
+      RET
+;================================================================
+delay_seconds:        ;subrutin loop bersarang (tunda maksimal 3.11 detik)
+    LDI   R20, 255    ;penghitung loop luar
+l5: LDI   R21, 255    ;penghitung loop tengah
+l6: LDI   R22, 20     ;penghitung loop dalam untuk memberikan tunda 0.25 detik
+l7: DEC   R22         ;kurangi loop dalam
+    BRNE  l7          ;loop jika tidak nol
+    DEC   R21         ;kurangi loop tengah
+    BRNE  l6          ;loop jika tidak nol
+    DEC   R20         ;kurangi loop luar
+    BRNE  l5          ;loop jika tidak nol
+    RET               ;kembali ke pemanggil
+;----------------------------------------------------------------
+
+;================================================================
+; Fungsi-fungsi Kontrol Mobil
+;================================================================
+
+; Variabel untuk status mobil
+.section .data
+    car_direction:  .byte 0  ; 0=berhenti, 1=maju, 2=mundur, 3=kiri, 4=kanan
+    front_status:   .byte 0  ; 0=aman, 1=bahaya
+    back_status:    .byte 0
+    left_status:    .byte 0
+    right_status:   .byte 0
+    emergency_stop: .byte 0  ; 0=operasi normal, 1=berhenti darurat
+    prev_direction: .byte 0  ; Simpan arah sebelumnya sebelum berhenti darurat
+
+.section .text
+
+;================================================================
+; Inisialisasi komponen mobil (motor, sensor, buzzer)
+;================================================================
+init_car:
+    ; Simpan register yang digunakan
+    PUSH  R16
+    PUSH  R17
+
+    ; Inisialisasi LCD terlebih dahulu - ini akan mengatur PORTD dan PORTB untuk LCD
+    RCALL LCD_write
+
+    ; Sekarang inisialisasi PORTC untuk sensor IR dan buzzer
+    LDI   R16, 0x20         ; Atur PC5 sebagai output untuk buzzer, PC0-PC3 sebagai input
+    OUT   DDRC, R16
+
+    ; Aktifkan resistor pull-up untuk input sensor
+    LDI   R16, 0x0F         ; Atur pull-up PC0-PC3
+    OUT   PORTC, R16
+
+    ; Konfigurasi INT0 (PD2) untuk tombol darurat
+    ; Atur PD2 sebagai input dengan pull-up
+    CBI   DDRD, 2           ; Atur PD2 sebagai input
+    SBI   PORTD, 2          ; Aktifkan pull-up pada PD2
+
+    ; Konfigurasi INT0 untuk dipicu pada falling edge (penekanan tombol)
+    LDI   R16, (1<<ISC01)   ; Falling edge dari INT0 menghasilkan interupsi
+    STS   EICRA, R16
+
+    ; Aktifkan interupsi INT0
+    LDI   R16, (1<<INT0)
+    OUT   EIMSK, R16
+
+    ; Inisialisasi emergency_stop ke 0 (operasi normal)
+    LDI   R16, 0
+    STS   emergency_stop, R16
+
+    ; Aktifkan interupsi global
+    SEI
+
+    ; Re-inisialisasi PORTB untuk kontrol motor sambil mempertahankan pin LCD
+    ; PB0 (E) dan PB1 (RS) digunakan oleh LCD
+    ; PB5 (IN1), PB4 (IN2), PB3 (ENA) untuk motor maju/mundur
+    IN    R16, DDRB         ; Baca nilai DDRB saat ini
+    ORI   R16, 0x38         ; Atur PB3, PB4, PB5 sebagai output sambil mempertahankan bit lainnya
+    OUT   DDRB, R16
+
+    ; Konfigurasi PB2 (IN3) untuk kontrol motor kiri/kanan
+    ; PB2 (IN3), PC4/A4 (IN4) untuk motor kiri/kanan
+    ; Bit yang lebih tinggi dari PORTD digunakan untuk data LCD
+    IN    R16, DDRB         ; Baca nilai DDRB saat ini
+    ORI   R16, 0x04         ; Atur PB2 sebagai output sambil mempertahankan bit lainnya
+    OUT   DDRB, R16
+
+    ; Konfigurasi PC4 (A4/IN4) untuk kontrol motor kiri/kanan
+    IN    R16, DDRC         ; Baca nilai DDRC saat ini
+    ORI   R16, 0x10         ; Atur PC4 sebagai output sambil mempertahankan bit lainnya
+    OUT   DDRC, R16
+
+    ; Inisialisasi Timer2 untuk PWM pada PB3 (OC2A)
+    LDI   R16, (1<<WGM20)|(1<<WGM21)|(1<<COM2A1)  ; Mode Fast PWM, mode non-inverting
+    STS   TCCR2A, R16
+    LDI   R16, (1<<CS21)    ; Prescaler = 8
+    STS   TCCR2B, R16
+    LDI   R16, 200          ; Atur siklus tugas PWM (0-255)
+    STS   OCR2A, R16
+
+    ; Tampilkan pesan awal
+    RCALL display_status
+
+    ; Kembalikan register
+    POP   R17
+    POP   R16
+    RET
