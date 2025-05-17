@@ -96,7 +96,7 @@ Kode dibagi menjadi beberapa bagian utama:
 1. Baris pertama menampilkan arah pergerakan mobil (DEPAN, BELAKANG, KIRI, KANAN, STOP) atau "EMERGENCY" saat dalam mode darurat
 2. Baris kedua menampilkan status sensor dengan format:
    - D:x B:x K:x N:x (Depan, Belakang, Kiri, Kanan)
-   - Nilai x adalah 1 jika hambatan terdeteksi, 0 jika tidak ada hambatan
+   - Nilai x adalah 0 jika hambatan terdeteksi, 1 jika tidak ada hambatan
 
 ## Fungsi Utama
 
