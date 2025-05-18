@@ -8,11 +8,11 @@ Repository Proyek Akhir Praktikum MBD Kelompok 7 - Teknik Komputer Universitas I
 - Muhammad Hilmi Al Muttaqi - 2306267082
 
 ## Content
-[Introduction to the Problem and the Solution](#introduction-to-the-problem-and-the-solution)
-[Hardware Design and Implementaion Details](#hardware-design-and-implementation-details)
-[Software Implementation Details](#software-implementation-details)
-[Test Results and Performance Evaluation](#test-results-and-performance-evaluation)
-[Conclusion and Future Work](#conclusion-and-future-work)
+- [Introduction to the Problem and the Solution](#introduction-to-the-problem-and-the-solution)
+- [Hardware Design and Implementaion Details](#hardware-design-and-implementation-details)
+- [Software Implementation Details](#software-implementation-details)
+- [Test Results and Performance Evaluation](#test-results-and-performance-evaluation)
+- [Conclusion and Future Work](#conclusion-and-future-work)
 
 ## Introduction to the Problem and the Solution
 Proyek ini mengatasi kebutuhan sistem pengantaran barang ringan otomatis di lingkungan kerja seperti kantor, restoran, atau hotel. Pengantaran manual oleh staf manusia sering memakan waktu, mengganggu alur kerja, dan menambah beban operasional. GoVan (Go I.V.A.N - Integrated Vehicle for Autonomous Navigation) adalah prototipe mobil mini otomatis yang dirancang untuk bergerak secara mandiri dan menghindari hambatan menggunakan sensor serta logika navigasi berbasis mikrokontroler. Mobil ini dilengkapi dengan empat sensor inframerah untuk mendeteksi hambatan dari empat arah berbeda, dengan pengambilan keputusan melalui logika pemrograman berurutan (polling) berdasarkan prioritas arah.
