@@ -19,21 +19,136 @@
 
 ; Vektor interupsi
 .global INT0_vect
+
+; Definisi alamat I2C PCF8574
+.equ PCF8574_ADDR, 0x27  ; Alamat I2C PCF8574 (biasanya 0x27 atau 0x3F)
+.equ PCF8574_WRITE, 0x4E ; Alamat PCF8574 untuk operasi tulis (0x27 << 1)
+
+; Definisi bit PCF8574 untuk LCD
+.equ LCD_RS, 0    ; P0 -> RS
+.equ LCD_RW, 1    ; P1 -> RW
+.equ LCD_E, 2     ; P2 -> E
+.equ LCD_BL, 3    ; P3 -> Backlight
+.equ LCD_D4, 4    ; P4 -> D4
+.equ LCD_D5, 5    ; P5 -> D5
+.equ LCD_D6, 6    ; P6 -> D6
+.equ LCD_D7, 7    ; P7 -> D7
+
+; Definisi bit status TWI
+.equ TWI_START, 0x08      ; START telah dikirim
+.equ TWI_REP_START, 0x10  ; Repeated START telah dikirim
+.equ TWI_MT_SLA_ACK, 0x18 ; SLA+W telah dikirim, ACK diterima
+.equ TWI_MT_DATA_ACK, 0x28 ; Data telah dikirim, ACK diterima
+;================================================================
+;================================================================
+; Fungsi-fungsi I2C/TWI
+;================================================================
+TWI_init:
+      ; Konfigurasi pin SCL dan SDA (PC5/AC5 dan PC4/AC4)
+      ; Pastikan pin PC4 dan PC5 diatur sebagai input dengan pull-up
+      ; Jaga PC0-PC3 tetap sebagai input untuk sensor
+      IN    R16, DDRC        ; Baca nilai DDRC saat ini
+      ANDI  R16, ~((1<<PC4)|(1<<PC5))  ; Atur PC4 dan PC5 sebagai input
+      OUT   DDRC, R16
+
+      ; Aktifkan pull-up hanya pada PC4 dan PC5 untuk I2C
+      ; Jaga status pull-up pada PC0-PC3 untuk sensor
+      IN    R16, PORTC       ; Baca nilai PORTC saat ini
+      ORI   R16, (1<<PC4)|(1<<PC5)     ; Aktifkan pull-up pada PC4 dan PC5
+      OUT   PORTC, R16
+
+      ; Reset TWI jika ada kondisi yang tidak diinginkan
+      LDI   R16, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
+      STS   TWCR, R16
+      RCALL delay_ms         ; Tunggu reset selesai
+
+      ; Inisialisasi I2C dengan frekuensi 100kHz (untuk 16MHz clock)
+      LDI   R16, 18          ; Nilai untuk TWBR = 18 (100kHz pada 16MHz dengan prescaler 1)
+      STS   TWBR, R16
+      LDI   R16, 0           ; Prescaler = 1
+      STS   TWSR, R16
+
+      ; Aktifkan TWI
+      LDI   R16, (1<<TWEN)
+      STS   TWCR, R16
+      RCALL delay_ms         ; Tunggu TWI siap
+      RET
+
+TWI_start:
+      ; Kirim kondisi START
+      LDI   R16, (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)
+      STS   TWCR, R16
+
+      ; Tunggu sampai TWINT diatur (operasi selesai)
+TWI_start_wait:
+      LDS   R16, TWCR
+      SBRS  R16, TWINT
+      RJMP  TWI_start_wait
+
+      ; Periksa status
+      LDS   R16, TWSR
+      ANDI  R16, 0xF8        ; Masking bit prescaler
+
+      ; Periksa apakah START atau REPEATED START berhasil
+      CPI   R16, TWI_START
+      BREQ  TWI_start_ok
+      CPI   R16, TWI_REP_START
+      BREQ  TWI_start_ok
+
+      ; Jika tidak berhasil, coba lagi
+      RCALL TWI_stop
+      RCALL delay_ms
+      RJMP  TWI_start
+
+TWI_start_ok:
+      RET
+
+TWI_write:
+      ; R16 berisi data yang akan dikirim
+      STS   TWDR, R16        ; Muat data ke register data
+
+      ; Kirim data
+      LDI   R17, (1<<TWINT)|(1<<TWEN)
+      STS   TWCR, R17
+
+      ; Tunggu sampai TWINT diatur (operasi selesai)
+TWI_write_wait:
+      LDS   R17, TWCR
+      SBRS  R17, TWINT
+      RJMP  TWI_write_wait
+
+      ; Periksa status
+      LDS   R17, TWSR
+      ANDI  R17, 0xF8        ; Masking bit prescaler
+
+      ; Periksa apakah SLA+W atau DATA berhasil dikirim dan ACK diterima
+      CPI   R17, TWI_MT_SLA_ACK
+      BREQ  TWI_write_done
+      CPI   R17, TWI_MT_DATA_ACK
+      BREQ  TWI_write_done
+
+      ; Jika gagal, kirim STOP dan kembalikan status error di R17
+      RCALL TWI_stop
+
+TWI_write_done:
+      RET
+
+TWI_stop:
+      ; Kirim kondisi STOP
+      LDI   R16, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
+      STS   TWCR, R16
+
+      ; Tunggu sedikit untuk memastikan STOP dikirim
+      RCALL delay_ms
+      RET
+
+;================================================================
+; Fungsi-fungsi LCD dengan I2C PCF8574
 ;================================================================
 LCD_write:
-      ; Atur hanya pin nibble tinggi PORTD sebagai output untuk data LCD
-      ; Jaga nibble rendah (termasuk PD2) tersedia untuk penggunaan lain
-      IN    R16, DDRD         ; Baca nilai DDRD saat ini
-      ORI   R16, 0xF0         ; Atur hanya nibble tinggi (PD4-PD7) sebagai output
-      OUT   DDRD, R16         ; Atur port D sebagai output untuk data
-
-      ; Atur semua pin PORTB sebagai output untuk kontrol LCD
-      LDI   R16, 0xFF
-      OUT   DDRB, R16         ; Atur port B sebagai output untuk perintah
-
-      ; Inisialisasi pin kontrol LCD
-      CBI   PORTB, 0          ; EN = 0
-      RCALL delay_ms          ; Tunggu LCD menyala
+      ; Inisialisasi I2C
+      RCALL TWI_init
+      RCALL delay_ms         ; Tunggu LCD menyala
 
       ; Inisialisasi LCD
       RCALL LCD_init
@@ -41,87 +156,258 @@ LCD_write:
       ; Kembali ke pemanggil - kontrol mobil akan menangani tampilan
       RET
 ;================================================================
+; Fungsi untuk mengirim byte ke PCF8574
+PCF8574_write:
+      ; R16 berisi data yang akan dikirim ke PCF8574
+      PUSH  R16               ; Simpan data
+      PUSH  R17               ; Simpan R17 yang akan digunakan
+
+      ; Kirim kondisi START
+      RCALL TWI_start
+
+      ; Kirim alamat PCF8574 untuk operasi tulis
+      LDI   R16, PCF8574_WRITE
+      RCALL TWI_write
+
+      ; Periksa status penulisan alamat
+      CPI   R17, TWI_MT_SLA_ACK
+      BRNE  PCF8574_write_error
+
+      ; Kirim data
+      POP   R17               ; Kembalikan R17
+      POP   R16               ; Ambil kembali data
+      PUSH  R16               ; Simpan lagi untuk digunakan nanti
+      RCALL TWI_write
+
+      ; Periksa status penulisan data
+      CPI   R17, TWI_MT_DATA_ACK
+      BRNE  PCF8574_write_error
+
+      ; Kirim kondisi STOP
+      RCALL TWI_stop
+      POP   R16               ; Bersihkan stack
+      RET
+
+PCF8574_write_error:
+      ; Jika terjadi error, kirim STOP dan coba lagi
+      RCALL TWI_stop
+      RCALL delay_ms
+      POP   R16               ; Ambil kembali data
+      RCALL PCF8574_write     ; Coba lagi
+      RET
+
+; Fungsi untuk mengirim nibble ke LCD melalui PCF8574
+LCD_send_nibble:
+      ; R16 berisi data nibble (di 4 bit tinggi)
+      ; R17 berisi flag RS (0=command, 1=data)
+
+      PUSH  R16               ; Simpan data
+      PUSH  R17               ; Simpan flag RS
+      PUSH  R18               ; Simpan register yang digunakan
+      PUSH  R19               ; Simpan register tambahan
+
+      ; Siapkan data untuk PCF8574
+      ; Format: P7(D7) P6(D6) P5(D5) P4(D4) P3(BL) P2(E) P1(RW) P0(RS)
+
+      ; Ambil 4 bit tinggi dari data dan posisikan di bit 4-7 (D4-D7)
+      MOV   R18, R16
+      ANDI  R18, 0xF0         ; Masking 4 bit tinggi
+
+      ; Atur bit RS sesuai flag
+      MOV   R19, R17          ; Salin flag RS ke R19
+      ANDI  R19, 0x01         ; Pastikan hanya bit 0 yang digunakan
+      OR    R18, R19          ; Gabungkan dengan data
+
+      ; Atur RW = 0 (write) dan backlight ON
+      ORI   R18, (1<<LCD_BL)  ; Backlight ON
+
+      ; Kirim dengan E = 0
+      MOV   R16, R18
+      RCALL PCF8574_write
+      RCALL delay_short       ; Delay lebih pendek untuk karakter
+
+      ; Kirim dengan E = 1
+      ORI   R18, (1<<LCD_E)   ; E = 1
+      MOV   R16, R18
+      RCALL PCF8574_write
+      RCALL delay_us          ; Delay lebih pendek untuk karakter
+
+      ; Kirim dengan E = 0
+      ANDI  R18, ~(1<<LCD_E)  ; E = 0
+      MOV   R16, R18
+      RCALL PCF8574_write
+      RCALL delay_us          ; Delay lebih pendek untuk karakter
+
+      POP   R19               ; Kembalikan register
+      POP   R18
+      POP   R17
+      POP   R16
+      RET
+
 LCD_init:
-      LDI   R16, 0x33         ;inisialisasi LCD untuk data 4-bit
-      RCALL command_wrt       ;kirim ke register perintah
+      ; Tunggu LCD menyala (lebih lama untuk memastikan stabilitas)
+      LDI   R16, 10
+init_delay_loop:
       RCALL delay_ms
-      LDI   R16, 0x32         ;inisialisasi LCD untuk data 4-bit
+      DEC   R16
+      BRNE  init_delay_loop
+
+      ; Inisialisasi PCF8574 dengan semua pin low kecuali backlight
+      LDI   R16, (1<<LCD_BL)  ; Backlight ON, semua pin lain LOW
+      RCALL PCF8574_write
+      RCALL delay_ms
+
+      ; Inisialisasi dalam mode 4-bit menggunakan protokol reset standar
+      ; Pertama kirim 0x3 tiga kali
+      LDI   R16, 0x30         ; 0011 0000 - bit 4-7 adalah 0011, RS=0
+      LDI   R17, 0            ; RS = 0 (command)
+      RCALL LCD_send_nibble
+
+      ; Tunggu lebih dari 4.1ms
+      LDI   R16, 5
+init_delay1:
+      RCALL delay_ms
+      DEC   R16
+      BRNE  init_delay1
+
+      ; Kirim 0x3 lagi
+      LDI   R16, 0x30
+      LDI   R17, 0            ; RS = 0 (command)
+      RCALL LCD_send_nibble
+
+      ; Tunggu lebih dari 100us
+      RCALL delay_ms
+
+      ; Kirim 0x3 ketiga kalinya
+      LDI   R16, 0x30
+      LDI   R17, 0            ; RS = 0 (command)
+      RCALL LCD_send_nibble
+      RCALL delay_ms
+
+      ; Sekarang kirim 0x2 untuk mengatur mode 4-bit
+      LDI   R16, 0x20
+      LDI   R17, 0            ; RS = 0 (command)
+      RCALL LCD_send_nibble
+      RCALL delay_ms
+
+      ; Sekarang kita bisa menggunakan command_wrt untuk perintah lengkap
+      LDI   R16, 0x28         ; LCD 2 baris, matriks 5x7, mode 4-bit
       RCALL command_wrt
       RCALL delay_ms
-      LDI   R16, 0x28         ;LCD 2 baris, matriks 5x7
+
+      LDI   R16, 0x08         ; Display off
       RCALL command_wrt
       RCALL delay_ms
-      LDI   R16, 0x0C         ;tampilan ON, kursor OFF
+
+      LDI   R16, 0x01         ; Bersihkan LCD
       RCALL command_wrt
-      LDI   R16, 0x01         ;bersihkan LCD
+
+      ; Tunggu lebih lama untuk perintah clear display
+      LDI   R16, 5
+clear_delay:
+      RCALL delay_ms
+      DEC   R16
+      BRNE  clear_delay
+
+      LDI   R16, 0x06         ; Entry mode set: increment, no shift
       RCALL command_wrt
       RCALL delay_ms
-      LDI   R16, 0x06         ;geser kursor ke kanan
+
+      LDI   R16, 0x0C         ; Display on, cursor off, blink off
       RCALL command_wrt
+      RCALL delay_ms
+
       RET
 ;================================================================
 command_wrt:
-      MOV   R27, R16
-      ANDI  R27, 0xF0         ;masking nibble rendah & simpan nibble tinggi
+      ; Kirim perintah (RS=0) ke LCD melalui PCF8574
+      ; R16 berisi perintah yang akan dikirim
 
-      ; Pertahankan nibble rendah dari PORTD
-      IN    R17, PORTD        ;baca nilai PORTD saat ini
-      ANDI  R17, 0x0F         ;simpan hanya nibble rendah
-      OR    R27, R17          ;gabungkan dengan nibble tinggi dari perintah
-      OUT   PORTD, R27        ;output ke port D dengan mempertahankan nibble rendah
+      PUSH  R16               ; Simpan perintah
+      PUSH  R17               ; Simpan register yang digunakan
+      PUSH  R18               ; Simpan register tambahan
+      PUSH  R19               ; Simpan register tambahan untuk flag
 
-      CBI   PORTB, 1          ;RS = 0 untuk perintah
-      SBI   PORTB, 0          ;EN = 1
-      RCALL delay_short       ;perlebar pulsa EN
-      CBI   PORTB, 0          ;EN = 0 untuk pulsa H-ke-L
-      RCALL delay_us          ;tunda dalam mikrodetik
-      ;----------------------------------------------------
-      MOV   R27, R16
-      SWAP  R27               ;tukar nibble
-      ANDI  R27, 0xF0         ;masking nibble rendah & simpan nibble tinggi
+      ; Simpan perintah untuk pengecekan
+      MOV   R19, R16
 
-      ; Pertahankan nibble rendah dari PORTD
-      IN    R17, PORTD        ;baca nilai PORTD saat ini
-      ANDI  R17, 0x0F         ;simpan hanya nibble rendah
-      OR    R27, R17          ;gabungkan dengan nibble tinggi dari perintah
-      OUT   PORTD, R27        ;output ke port D dengan mempertahankan nibble rendah
+      ; Kirim nibble tinggi terlebih dahulu
+      MOV   R18, R16          ; Salin perintah ke R18
+      ANDI  R18, 0xF0         ; Ambil hanya 4 bit tinggi
+      LDI   R17, 0            ; RS = 0 (command)
+      MOV   R16, R18          ; Pindahkan data ke R16
+      RCALL LCD_send_nibble
 
-      SBI   PORTB, 0          ;EN = 1
-      RCALL delay_short       ;perlebar pulsa EN
-      CBI   PORTB, 0          ;EN = 0 untuk pulsa H-ke-L
-      RCALL delay_us          ;tunda dalam mikrodetik
+      ; Kirim nibble rendah
+      POP   R19               ; Ambil kembali flag perintah
+      POP   R18               ; Ambil kembali register tambahan
+      POP   R17               ; Ambil kembali register
+      POP   R16               ; Ambil kembali perintah asli
+      PUSH  R16               ; Simpan lagi untuk digunakan nanti
+      PUSH  R17               ; Simpan lagi
+      PUSH  R19               ; Simpan flag perintah
+
+      SWAP  R16               ; Tukar nibble (bit rendah ke bit tinggi)
+      ANDI  R16, 0xF0         ; Ambil hanya 4 bit tinggi (yang tadinya rendah)
+      LDI   R17, 0            ; RS = 0 (command)
+      RCALL LCD_send_nibble
+
+      ; Periksa jenis perintah untuk menentukan delay
+      POP   R19               ; Ambil kembali flag perintah
+
+      ; Perintah yang memerlukan delay lebih lama
+      CPI   R19, 0x01         ; Clear display?
+      BREQ  cmd_long_delay
+      CPI   R19, 0x02         ; Return home?
+      BREQ  cmd_long_delay
+      CPI   R19, 0x03         ; Entry mode set?
+      BREQ  cmd_long_delay
+
+      ; Perintah normal, delay pendek
+      RCALL delay_short
+      RJMP  cmd_done
+
+cmd_long_delay:
+      ; Perintah yang memerlukan waktu lebih lama
+      RCALL delay_ms
+
+cmd_done:
+      POP   R17               ; Kembalikan register
+      POP   R16               ; Kembalikan perintah
       RET
 ;================================================================
 data_wrt:
-      MOV   R27, R16
-      ANDI  R27, 0xF0         ;masking nibble rendah & simpan nibble tinggi
+      ; Kirim data (RS=1) ke LCD melalui PCF8574
+      ; R16 berisi data yang akan dikirim
 
-      ; Pertahankan nibble rendah dari PORTD
-      IN    R17, PORTD        ;baca nilai PORTD saat ini
-      ANDI  R17, 0x0F         ;simpan hanya nibble rendah
-      OR    R27, R17          ;gabungkan dengan nibble tinggi dari data
-      OUT   PORTD, R27        ;output ke port D dengan mempertahankan nibble rendah
+      PUSH  R16               ; Simpan data
+      PUSH  R17               ; Simpan register yang digunakan
+      PUSH  R18               ; Simpan register tambahan
 
-      SBI   PORTB, 1          ;RS = 1 untuk data
-      SBI   PORTB, 0          ;EN = 1
-      RCALL delay_short       ;perlebar pulsa EN
-      CBI   PORTB, 0          ;EN = 0 untuk pulsa H-ke-L
-      RCALL delay_us          ;tunda dalam mikrodetik
-      ;----------------------------------------------------
-      MOV   R27, R16
-      SWAP  R27               ;tukar nibble
-      ANDI  R27, 0xF0         ;masking nibble rendah & simpan nibble tinggi
+      ; Kirim nibble tinggi terlebih dahulu
+      MOV   R18, R16          ; Salin data ke R18
+      ANDI  R18, 0xF0         ; Ambil hanya 4 bit tinggi
+      LDI   R17, 1            ; RS = 1 (data)
+      MOV   R16, R18          ; Pindahkan data ke R16
+      RCALL LCD_send_nibble
 
-      ; Pertahankan nibble rendah dari PORTD
-      IN    R17, PORTD        ;baca nilai PORTD saat ini
-      ANDI  R17, 0x0F         ;simpan hanya nibble rendah
-      OR    R27, R17          ;gabungkan dengan nibble tinggi dari data
-      OUT   PORTD, R27        ;output ke port D dengan mempertahankan nibble rendah
+      ; Kirim nibble rendah
+      POP   R18               ; Ambil kembali register tambahan
+      POP   R17               ; Ambil kembali register
+      POP   R16               ; Ambil kembali data asli
+      PUSH  R16               ; Simpan lagi untuk digunakan nanti
+      PUSH  R17               ; Simpan lagi
 
-      SBI   PORTB, 0          ;EN = 1
-      RCALL delay_short       ;perlebar pulsa EN
-      CBI   PORTB, 0          ;EN = 0 untuk pulsa H-ke-L
-      RCALL delay_us          ;tunda dalam mikrodetik
+      SWAP  R16               ; Tukar nibble (bit rendah ke bit tinggi)
+      ANDI  R16, 0xF0         ; Ambil hanya 4 bit tinggi (yang tadinya rendah)
+      LDI   R17, 1            ; RS = 1 (data)
+      RCALL LCD_send_nibble
+
+      ; Tunggu sangat singkat untuk karakter
+      RCALL delay_short
+
+      POP   R17               ; Kembalikan register
+      POP   R16               ; Kembalikan data
       RET
 ;================================================================
 delay_short:
@@ -180,16 +466,23 @@ init_car:
     PUSH  R16
     PUSH  R17
 
-    ; Inisialisasi LCD terlebih dahulu - ini akan mengatur PORTD dan PORTB untuk LCD
+    ; Inisialisasi I2C dan LCD
     RCALL LCD_write
 
-    ; Sekarang inisialisasi PORTC untuk sensor IR dan buzzer
-    LDI   R16, 0x20         ; Atur PC5 sebagai output untuk buzzer, PC0-PC3 sebagai input
+    ; Inisialisasi PORTC untuk sensor IR dan I2C
+    ; PC5 dan PC4 digunakan untuk I2C (SCL dan SDA)
+    ; PC0-PC3 sebagai input untuk sensor IR
+    IN    R16, DDRC         ; Baca nilai DDRC saat ini
+    ANDI  R16, 0xC0         ; Pertahankan bit lain, atur PC0-PC5 sebagai input (1100 0000)
     OUT   DDRC, R16
 
-    ; Aktifkan resistor pull-up untuk input sensor
-    LDI   R16, 0x0F         ; Atur pull-up PC0-PC3
+    ; Aktifkan resistor pull-up untuk input sensor dan I2C
+    IN    R16, PORTC        ; Baca nilai PORTC saat ini
+    ORI   R16, 0x3F         ; Aktifkan pull-up pada PC0-PC5 (0011 1111)
     OUT   PORTC, R16
+
+    ; Gunakan PB0 sebagai output untuk buzzer (menggantikan PC5)
+    SBI   DDRB, 0           ; Atur PB0 sebagai output untuk buzzer
 
     ; Konfigurasi INT0 (PD2) untuk tombol darurat
     ; Atur PD2 sebagai input dengan pull-up
@@ -211,24 +504,12 @@ init_car:
     ; Aktifkan interupsi global
     SEI
 
-    ; Re-inisialisasi PORTB untuk kontrol motor sambil mempertahankan pin LCD
-    ; PB0 (E) dan PB1 (RS) digunakan oleh LCD
-    ; PB5 (IN1), PB4 (IN2), PB3 (ENA) untuk motor maju/mundur
-    IN    R16, DDRB         ; Baca nilai DDRB saat ini
-    ORI   R16, 0x38         ; Atur PB3, PB4, PB5 sebagai output sambil mempertahankan bit lainnya
+    ; Konfigurasi pin motor dan buzzer
+    ; PB0 untuk buzzer
+    ; PB1 (IN4), PB2 (IN3) untuk motor kiri/kanan
+    ; PB3 (ENA), PB4 (IN2), PB5 (IN1) untuk motor maju/mundur
+    LDI   R16, 0x3F         ; Atur PB0-PB5 sebagai output (0011 1111)
     OUT   DDRB, R16
-
-    ; Konfigurasi PB2 (IN3) untuk kontrol motor kiri/kanan
-    ; PB2 (IN3), PC4/A4 (IN4) untuk motor kiri/kanan
-    ; Bit yang lebih tinggi dari PORTD digunakan untuk data LCD
-    IN    R16, DDRB         ; Baca nilai DDRB saat ini
-    ORI   R16, 0x04         ; Atur PB2 sebagai output sambil mempertahankan bit lainnya
-    OUT   DDRB, R16
-
-    ; Konfigurasi PC4 (A4/IN4) untuk kontrol motor kiri/kanan
-    IN    R16, DDRC         ; Baca nilai DDRC saat ini
-    ORI   R16, 0x10         ; Atur PC4 sebagai output sambil mempertahankan bit lainnya
-    OUT   DDRC, R16
 
     ; Inisialisasi Timer2 untuk PWM pada PB3 (OC2A)
     LDI   R16, (1<<WGM20)|(1<<WGM21)|(1<<COM2A1)  ; Mode Fast PWM, mode non-inverting
@@ -452,10 +733,10 @@ emergency_display:
     ; Tampilkan pesan "EMERGENCY" atau indikator khusus
     ; Ini ditangani dalam fungsi display_status
 
-    ; Tunda kecil
-    LDI   R17, 2
+    ; Tunda sangat kecil untuk pembacaan sensor yang lebih responsif
+    LDI   R17, 1
 emergency_delay_loop:
-    RCALL delay_ms
+    RCALL delay_short
     DEC   R17
     BRNE  emergency_delay_loop
 
@@ -466,10 +747,10 @@ do_update_display:
     ; Perbarui LCD dengan status saat ini
     RCALL display_status
 
-    ; Tunda kecil
-    LDI   R17, 2
+    ; Tunda sangat kecil untuk pembacaan sensor yang lebih responsif
+    LDI   R17, 1
 delay_loop:
-    RCALL delay_ms
+    RCALL delay_short
     DEC   R17
     BRNE  delay_loop
 
@@ -591,7 +872,7 @@ motor_forward:
 
     ; Hentikan motor kiri/kanan saat bergerak maju
     CBI   PORTB, 2          ; IN3 = LOW (PB2)
-    CBI   PORTC, 4          ; IN4 = LOW (PC4/A4)
+    CBI   PORTB, 1          ; IN4 = LOW (PB1/pin9) - diubah dari PC4/A4
     RET
 
 motor_backward:
@@ -601,7 +882,7 @@ motor_backward:
 
     ; Hentikan motor kiri/kanan saat bergerak mundur
     CBI   PORTB, 2          ; IN3 = LOW (PB2)
-    CBI   PORTC, 4          ; IN4 = LOW (PC4/A4)
+    CBI   PORTB, 1          ; IN4 = LOW (PB1/pin9) - diubah dari PC4/A4
     RET
 
 motor_left:
@@ -611,7 +892,7 @@ motor_left:
 
     ; Atur motor kiri/kanan untuk berbelok ke kiri
     SBI   PORTB, 2          ; IN3 = HIGH (PB2)
-    CBI   PORTC, 4          ; IN4 = LOW (PC4/A4)
+    CBI   PORTB, 1          ; IN4 = LOW (PB1/pin9) - diubah dari PC4/A4
     RET
 
 motor_right:
@@ -621,7 +902,7 @@ motor_right:
 
     ; Atur motor kiri/kanan untuk berbelok ke kanan
     CBI   PORTB, 2          ; IN3 = LOW (PB2)
-    SBI   PORTC, 4          ; IN4 = HIGH (PC4/A4)
+    SBI   PORTB, 1          ; IN4 = HIGH (PB1/pin9) - diubah dari PC4/A4
     RET
 
 motor_stop:
@@ -631,7 +912,7 @@ motor_stop:
 
     ; Hentikan motor kiri/kanan
     CBI   PORTB, 2          ; IN3 = LOW (PB2)
-    CBI   PORTC, 4          ; IN4 = LOW (PC4/A4)
+    CBI   PORTB, 1          ; IN4 = LOW (PB1/pin9) - diubah dari PC4/A4
     RET
 
 ;================================================================
@@ -692,11 +973,11 @@ store_right:
 ; Fungsi kontrol buzzer
 ;================================================================
 buzzer_on:
-    SBI   PORTC, 5          ; Nyalakan buzzer (PC5)
+    SBI   PORTB, 0          ; Nyalakan buzzer (PB0) - diubah dari PC5
     RET
 
 buzzer_off:
-    CBI   PORTC, 5          ; Matikan buzzer (PC5)
+    CBI   PORTB, 0          ; Matikan buzzer (PB0) - diubah dari PC5
     RET
 
 ;================================================================
